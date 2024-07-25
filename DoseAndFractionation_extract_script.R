@@ -26,12 +26,12 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
 # SETUP 
 
 #Set CAS connection details
-cas_snapshot <- NDRSAfunctions::createConnection(sid = "cas2406" #Update this to the latest snapshot
+cas_snapshot <- NDRSAfunctions::createConnection(sid = "cas2407" #Update this to the latest snapshot
                                                  , username = Sys.getenv("analyst_username")
                                                  , port = 1525)
 
 start_date<-as.Date('01-JAN-19',format='%d-%B-%y')
-end_date<-as.Date('30-APR-24',format='%d-%B-%y')
+end_date<-as.Date('31-MAY-24',format='%d-%B-%y') #Update this to the latest month 
 
 #SL comment: the monthDiff is showing how many full months are included and yearDiff is showing the number of years (rounded)there is between the earliest date and the last date 
 MonthDiff<-interval (start_date,end_date)%/%months(1)
@@ -46,18 +46,17 @@ end_date_=list()
 start_date_=list()
 
 #SL comment: from line 59 to line 66 this is a loop that pulls the RTDS data by year as a result of the size of the dataset being extracted, this is then combined later
-#SL comment: start_date_[[1]]<-start_date is the start date i.e. 01/01/2019 plus one year so 01/01/2020 and so one until you get to the full 5 years of data 
+#SL comment: start_date_[[1]]<-start_date is the start date i.e. 01/01/2019 plus one year so 01/01/2020 and so one until you get to the full number of years of data 
 start_date_[[1]]<-start_date
   
 for (i in 1:YearsDiff) {
   
-  
+start_date_[[i+1]]<-ceiling_date(start_date%m+%months(MonthSeq[i]),'month') 
 end_date_[[i]]<-ceiling_date(start_date%m+%months(MonthSeq[i]),'month')-days(1)
-start_date_[[i+1]]<-ceiling_date(start_date%m+%months(MonthSeq[i]),'month')
 
 }
 
-end_date_[[5]]<-end_date
+end_date_[[YearsDiff]]<-end_date 
   
   
 start_date_<-start_date_[1:i] #SL comment: cuts off the missing full year which was generated in line 60 which had a missing value for 01/01/2024 as that data is not available yet
@@ -76,13 +75,17 @@ rm(end_date,end_date_,Namez,start_date,start_date_ ) #SL comment: no longer need
 #   dbGetQueryOracle(snapshot, check)
 # rm(check)
   
-DoseFrac_Data_=list() #SL comment: this doesn't appear to do anything
-DoseFrac_Scr_=list() #SL comment: this doesn't appear to do anything
+DoseFrac_Data_=list() #SL comment: this doesn't appear to do anything. EJ Comment July '24: creating an empty list for use later
+DoseFrac_Scr_=list() #SL comment: this doesn't appear to do anything. EJ Comment July '24: creating an empty list for use later
   
 ## Creates table of duplicates in your area
 #SL comment: some patients, not very many have the same radiotherapy episode id, same treatment date, same diagnosis, same trust but are different patients
+#EJ Comment July 2024
+  #there are duplicates in RTDS V5, this will be resolved in v6. See guidance for more info. We have checked the v5 tables
+  #have commented out dup section below and added distinct to main query instead
 
-Dups<-paste0("create table  ",CAS_user,".Dup as
+#Query to create the table
+Dups<-paste0("create table  ",Sys.getenv("analyst_username"),".Dup as
 
 (select
 distinct
@@ -105,15 +108,23 @@ on t1.radiotherapyepisodeid=t2.radiotherapyepisodeid
 left join analysisncr.trustsics tr
 on tr.CODE=t2.orgcodeprovider)")
 
-dbGetQueryOracle(snapshot,Dups)
+#Run the above query
+#EJ Comment July 2024
+  #got this error message "The following error was received: invalid value from generic function ‘fetch’, class “NULL”, expected “data.frame”"
+  #but when I checked my area in CAS the table has successfully been created.
+dbGetQueryOracle(cas_snapshot,Dups)
 
 ##Check if table was made ok
 dbGetQueryOracle(snapshot,paste0("select * from ",CAS_user,".Dup"))
 
 ##Main query runs for each year of data requested 
+#EJ comments July 2024
+  #I think it probably times out because there are so many case whens
+  #Could potentially improve by pulling the data and then doing the transformations in R?
+
   for (i in 1:nrow(DatesAll)){
 DoseFrac_Scr_[i] <-paste0(
-"select /*+ USE_HASH(A3 B) */ distinct 
+  "select /*+ USE_HASH(A3 B) */ distinct 
 A3.ORGCODEPROVIDER,
 B.Country,
 B.Provider_name, 
@@ -157,37 +168,30 @@ and (MAX_PR_EPI_DOSE between 49 and 55 and MAX_PR_EPI_FRACTIONS = 28 and MIN_INT
 when CANCERTYPE = 'ANAL' 
 and (MAX_PR_EPI_DOSE between 39 and 41 and MAX_PR_EPI_FRACTIONS = 28 and MIN_INTENT = 2) then '40 Gy in 28 fractions'
 when CANCERTYPE = 'ANAL'  
-and (MAX_PR_EPI_DOSE between 19 and 31 and MAX_PR_EPI_FRACTIONS between 5 and 15 and MIN_INTENT = 2)	then '20-30 Gy in 5-15 fractions' --amended to 02 only
+and (MAX_PR_EPI_DOSE between 19 and 31 and MAX_PR_EPI_FRACTIONS between 5 and 15 and MIN_INTENT = 2)	then '20-30 Gy in 5-15 fractions' --amended to 02 only because palliative just grouped by fractions
 
 when CANCERTYPE = 'BLADDER'
 and (MAX_PR_EPI_DOSE between 59 and 65 and MAX_PR_EPI_FRACTIONS between 30 and 32 and MIN_INTENT = 2)then '60-64 Gy in 30-32 fractions'
 when CANCERTYPE = 'BLADDER'
 and (MAX_PR_EPI_DOSE between 51.5 and 56 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then '52.5-55 Gy in 20 fractions'
---when CANCERTYPE = 'BLADDER'
---and (MAX_PR_EPI_DOSE between 20 and 37 and MAX_PR_EPI_FRACTIONS between 3 and 6 and MIN_INTENT = '01')then '21-36 Gy in 3-6 fractions'
---when CANCERTYPE = 'BLADDER'
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 11 and MAX_PR_EPI_FRACTIONS =1 and MIN_INTENT = '01')then '8-10 Gy in 1 fraction' --check comm int
 
-
+when CANCERTYPE = 'BRAIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 12 and 26 and MAX_PR_EPI_FRACTIONS between 1 and 5 and MIN_INTENT = 2) then '13-25 Gy in 1-5 fractions' --added July 2024
+when CANCERTYPE = 'BRAIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 29 and 41 and MAX_PR_EPI_FRACTIONS between 6 and 15 and MIN_INTENT = 2) then '30-40 Gy in 6-15 fractions' --added July 2024
+when CANCERTYPE = 'BRAIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 35 and 46 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then '36-45 Gy in 15-20 fractions' --v04 change add
 when CANCERTYPE = 'BRAIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 44 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 33 and MIN_INTENT = 2)then '45-66 Gy in 25-33 fractions' 
-when CANCERTYPE = 'BRAIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 35 and 46 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then '36-45 Gy in 15-20 fractions' --v04 change add 
---when CANCERTYPE = 'BRAIN' 
---and (MAX_PR_EPI_DOSE BETWEEN 29 and 41 and MAX_PR_EPI_FRACTIONS between 6 and 15 and MIN_INTENT = '01')then '30-40 Gy in 6-15 fractions'
 
---when CANCERTYPE = 'BREAST' 
---and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS = 25 and MIN_INTENT = 2)then '50 Gy in 25 fractions'--no longer RCR July 24
 when CANCERTYPE = 'BREAST' 
 and (MAX_PR_EPI_DOSE BETWEEN 47 and 49 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = 2)then '48 Gy in 15 fractions'--new July 24
 when CANCERTYPE = 'BREAST' 
 and (MAX_PR_EPI_DOSE BETWEEN 39 and 41 and MAX_PR_EPI_FRACTIONS =15 and MIN_INTENT = 2)then '40 Gy in 15 fractions' --v05 change simplified label to 40
 when CANCERTYPE = 'BREAST' 
 and (MAX_PR_EPI_DOSE BETWEEN 25 and 27 and MAX_PR_EPI_FRACTIONS =5 and MIN_INTENT = 2)then '26 Gy in 5 fractions'
---when CANCERTYPE = 'BREAST' 
---and (MAX_PR_EPI_DOSE BETWEEN 19 and 41 and MAX_PR_EPI_FRACTIONS between 5 and 15 and MIN_INTENT = '01')then '20-40 Gy in 5-15 fractions'
 
-when CANCERTYPE = 'CERVIX' -- as 45Gy in 25# is a subgroup not split this out?
+when CANCERTYPE = 'CERVIX'
 and (MAX_PR_EPI_DOSE  BETWEEN 39 and 66 and MAX_PR_EPI_FRACTIONS between 20 and 28 and MIN_INTENT = 2)then '40-65 Gy in 20-28 fractions'
 
 when CANCERTYPE = 'HEAD AND NECK' 
@@ -196,8 +200,8 @@ when CANCERTYPE = 'HEAD AND NECK'
 and (MAX_PR_EPI_DOSE BETWEEN 59 and 67 and MAX_PR_EPI_FRACTIONS between 28 and 30 and MIN_INTENT = 2)then '60-66 Gy in 28-30 fractions'
 when CANCERTYPE = 'HEAD AND NECK' 
 and (MAX_PR_EPI_DOSE BETWEEN 49 and 56 and MAX_PR_EPI_FRACTIONS between 16 and 20 and MIN_INTENT = 2)then '50-55 Gy in 16-20 fractions'
---when CANCERTYPE = 'HEAD AND NECK' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 41 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = '01')then '8-40 Gy in 1-10 fractions'
+when CANCERTYPE = 'HEAD AND NECK' 
+and (MAX_PR_EPI_DOSE BETWEEN 53 and 61 and MAX_PR_EPI_FRACTIONS between 30 and 35 and MIN_INTENT = 2)then '54-60 Gy in 30-35 fractions' --added July 2024
 
 when CANCERTYPE = 'LUNG' 
 and (MAX_PR_EPI_DOSE BETWEEN 53 and 55 and MAX_PR_EPI_FRACTIONS = 36 and MIN_INTENT = 2)then '54 Gy in 36 fractions' --v04 add CHART...to check if affects PIA assessment now or in future
@@ -207,46 +211,37 @@ when CANCERTYPE = 'LUNG'
 and (MAX_PR_EPI_DOSE BETWEEN 39 and 56 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then '40-55 Gy in 15-20 fractions'
 when CANCERTYPE = 'LUNG' 
 and (MAX_PR_EPI_DOSE BETWEEN 29 and 61 and MAX_PR_EPI_FRACTIONS between 1 and 8 and MIN_INTENT = 2)then '30-60 Gy in 1-8 fractions'
---when CANCERTYPE = 'LUNG' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 40 and MAX_PR_EPI_FRACTIONS between 1 and 13 and MIN_INTENT = '01')then '8-39 Gy in 1-13 fractions'
-
 
 when CANCERTYPE = 'LYMPHOMA' 
 and (MAX_PR_EPI_DOSE BETWEEN 35 and 46 and MAX_PR_EPI_FRACTIONS between 20 and 25 and MIN_INTENT = 2)then '36-45 Gy in 20-25 fractions'
 when CANCERTYPE = 'LYMPHOMA' --v04 change 36Gy bottom range
-and (MAX_PR_EPI_DOSE BETWEEN 19 and 31 and MAX_PR_EPI_FRACTIONS between 10 and 15 and MIN_INTENT = 2)then '20-30 Gy in 10-15 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 19 and 35 and MAX_PR_EPI_FRACTIONS between 10 and 15 and MIN_INTENT = 2)then '20-34 Gy in 10-15 fractions' --Edited July 2024
 when CANCERTYPE = 'LYMPHOMA' 
 and (MAX_PR_EPI_DOSE BETWEEN 19 and 31 and MAX_PR_EPI_FRACTIONS between 5 and 6 and MIN_INTENT = 2)then '20-30 Gy in 5-6 fractions' --v04 change altered group
 when CANCERTYPE = 'LYMPHOMA' 
 and (MAX_PR_EPI_DOSE BETWEEN 35 and 40 and MAX_PR_EPI_FRACTIONS between 9 and 13 and MIN_INTENT = 2) then '36-39 Gy in 9-13 fractions' --vo4 change new range added
 
---when CANCERTYPE = 'LYMPHOMA' --pall 20Gy/5# in following
---and (MAX_PR_EPI_DOSE BETWEEN 3 and 31 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = '01')then '4-30 Gy in 1-10 fractions'
-
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 54 and 56 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then '55 Gy in 20 fractions'
-when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS =15 and MIN_INTENT = 2)then '50 Gy in 15 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 56 and MAX_PR_EPI_FRACTIONS BETWEEN 15 AND 20 and MIN_INTENT = 2)then '50-55 Gy in 15-20 fractions' --Edited July 2024
 when CANCERTYPE = 'SKIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 44 and 46 and MAX_PR_EPI_FRACTIONS = 10 and MIN_INTENT = 2)then '45 Gy in 10 fractions'
 when CANCERTYPE = 'SKIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 39 and 41 and MAX_PR_EPI_FRACTIONS = 8 and MIN_INTENT = 2)then '40 Gy in 8 fractions'
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 34 and 36 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2)then '35 Gy in 5 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 34 and 36 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AND 5 and MIN_INTENT = 2)then '35 Gy in 4-5 fractions' --Edited July 2024
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 31.5 and 33.5 and MAX_PR_EPI_FRACTIONS = 4 and MIN_INTENT = 2)then '32.5 Gy in 4 fractions'
-
+and (MAX_PR_EPI_DOSE BETWEEN 31.5 and 33.5 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AND 5 and MIN_INTENT = 2)then '32.5 Gy in 4-5 fractions'
+when CANCERTYPE = 'SKIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 17 and 21 and MAX_PR_EPI_FRACTIONS = 1 and MIN_INTENT = 2)then '18-20 Gy in 1 fraction' --Added jULY 2024
+when CANCERTYPE = 'SKIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25 AND 33 and MIN_INTENT = 2)then '50-66 Gy in 25-33 fractions' --Added jULY 2024
 
 when CANCERTYPE = 'OESOPHAGUS' 
-and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2)then '41.5-45 Gy in 25-28 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 23 and 28 and MIN_INTENT = 2)then '41.5-45 Gy in 23-28 fractions'
 when CANCERTYPE = 'OESOPHAGUS' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 61 and MAX_PR_EPI_FRACTIONS between 25 and 30 and MIN_INTENT = 2)then '50-60 Gy in 25-30 fractions'
-when CANCERTYPE = 'OESOPHAGUS' --add pall 40Gy/15#?
-and (MAX_PR_EPI_DOSE BETWEEN 39 and 56 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then '40-55 Gy in 15-20 fractions' /*the spreadsheet says pall as well*/
-  --when CANCERTYPE = 'OESOPHAGUS' --pall 40Gy/15# added as discrete fractionation schedule
---and (MAX_PR_EPI_DOSE BETWEEN 39 and 41 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = '01') then '40 Gy in 15 fractions'
---when CANCERTYPE = 'OESOPHAGUS' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 31 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = '01')then '8-30 Gy in 1-10 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 30 and MIN_INTENT = 2)then '50-66 Gy in 25-30 fractions' --Edited Gy range July 2024
+when CANCERTYPE = 'OESOPHAGUS'
+and (MAX_PR_EPI_DOSE BETWEEN 39 and 56 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then '40-55 Gy in 15-20 fractions'
 
 when CANCERTYPE = 'PROSTATE' 
 and (MAX_PR_EPI_DOSE BETWEEN 65 and 79 and MAX_PR_EPI_FRACTIONS between 33 and 39 and MIN_INTENT = 2)then '66-78 Gy in 33-39 fractions'
@@ -257,22 +252,17 @@ and (MAX_PR_EPI_DOSE BETWEEN 35.25 and 37.25 and MAX_PR_EPI_FRACTIONS = 5 and MI
 when CANCERTYPE = 'PROSTATE' 											
 and (MAX_PR_EPI_DOSE BETWEEN 36.5 and 38.5 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = 2)then '37.5 Gy in 15 fractions'																					
 when CANCERTYPE = 'PROSTATE' 											
-and (MAX_PR_EPI_DOSE BETWEEN 45 and 47 and MAX_PR_EPI_FRACTIONS = 23 and MIN_INTENT = 2)then '46 Gy in 23 fractions'										
---when CANCERTYPE = 'PROSTATE' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 31 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = 1)then '8-30 Gy in 1-10 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 45 and 51 and MAX_PR_EPI_FRACTIONS BETWEEN 23 AND 25 and MIN_INTENT = 2)then '46-50 Gy in 23-25 fractions'										
 
 when CANCERTYPE = 'RECTAL' 
 and (MAX_PR_EPI_DOSE BETWEEN 44 and 51.4 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2)then '45-50.4 Gy in 25-28 fractions'
 when CANCERTYPE = 'RECTAL' 
 and (MAX_PR_EPI_DOSE BETWEEN 24 and 26 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2)then '25 Gy in 5 fractions'
---when CANCERTYPE = 'RECTAL' 
---and (MAX_PR_EPI_DOSE BETWEEN 19 and 31 and MAX_PR_EPI_FRACTIONS between 5 and 10 and MIN_INTENT = '01')then '20-30 Gy in 5-10 fractions'
 
 else 'other'
 end as dose_fractionation_schedules, 
 
-
-case --case statement to pull into 2 main groups the selected RCR COVID recommendations and all other schedules
+case --case statement to pull into 2 main groups the selected RCR recommendations and all other schedules
 when MIN_INTENT = '01' then 'outside curative RCR schedules' --v04 change 
 when CANCERTYPE = 'ANAL' 
 and (MAX_PR_EPI_DOSE between 49 and 55 and MAX_PR_EPI_FRACTIONS = 28 and MIN_INTENT = 2) then 'inside RCR schedules'
@@ -285,28 +275,28 @@ when CANCERTYPE = 'BLADDER'
 and (MAX_PR_EPI_DOSE between 59 and 65 and MAX_PR_EPI_FRACTIONS between 30 and 32 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'BLADDER'
 and (MAX_PR_EPI_DOSE between 51.5 and 56 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then 'inside RCR schedules'
---when CANCERTYPE = 'BLADDER'
---and (MAX_PR_EPI_DOSE between 20 and 37 and MAX_PR_EPI_FRACTIONS between 3 and 6 and MIN_INTENT = '01')then 'inside RCR schedules'
---when CANCERTYPE = 'BLADDER'
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 11 and MAX_PR_EPI_FRACTIONS =1 and MIN_INTENT = '01')then 'inside RCR schedules' --check comm int
 
+when CANCERTYPE = 'BRAIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 44 and 46 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then 'outside selected schedules' --added July 2024
 when CANCERTYPE = 'BRAIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 44 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 33 and MIN_INTENT = 2)then 'inside RCR schedules' 
 when CANCERTYPE = 'BRAIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 35 and 46 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then 'inside RCR schedules' --v04 change 
---when CANCERTYPE = 'BRAIN' 
---and (MAX_PR_EPI_DOSE BETWEEN 29 and 41 and MAX_PR_EPI_FRACTIONS between 6 and 15 and MIN_INTENT = '01')then 'inside RCR schedules'
+when CANCERTYPE = 'BRAIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 12 and 26 and MAX_PR_EPI_FRACTIONS between 1 and 5 and MIN_INTENT = 2) then 'inside RCR schedules' --added July 2024
+when CANCERTYPE = 'BRAIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 29 and 41 and MAX_PR_EPI_FRACTIONS between 6 and 15 and MIN_INTENT = 2) then 'inside RCR schedules' --added July 2024
 
 when CANCERTYPE = 'BREAST' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS = 25 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS = 25 and MIN_INTENT = 2)then 'outside selected schedules'
 when CANCERTYPE = 'BREAST' 
 and (MAX_PR_EPI_DOSE BETWEEN 39 and 41 and MAX_PR_EPI_FRACTIONS =15 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'BREAST' 
 and (MAX_PR_EPI_DOSE BETWEEN 25 and 27 and MAX_PR_EPI_FRACTIONS =5 and MIN_INTENT = 2)then 'inside RCR schedules'
---when CANCERTYPE = 'BREAST' 
---and (MAX_PR_EPI_DOSE BETWEEN 19 and 41 and MAX_PR_EPI_FRACTIONS between 5 and 15 and MIN_INTENT = '01')then 'inside RCR schedules'
+when CANCERTYPE = 'BREAST' 
+and (MAX_PR_EPI_DOSE BETWEEN 47 and 49 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = 2)then 'inside RCR schedules'--new July 24
 
-when CANCERTYPE = 'CERVIX' -- as 45Gy in 25# is a subgroup not split this out?
+when CANCERTYPE = 'CERVIX'
 and (MAX_PR_EPI_DOSE  BETWEEN 39 and 66 and MAX_PR_EPI_FRACTIONS between 20 and 28 and MIN_INTENT = 2)then 'inside RCR schedules'
 
 when CANCERTYPE = 'HEAD AND NECK' 
@@ -315,9 +305,21 @@ when CANCERTYPE = 'HEAD AND NECK'
 and (MAX_PR_EPI_DOSE BETWEEN 59 and 67 and MAX_PR_EPI_FRACTIONS between 28 and 30 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'HEAD AND NECK' 
 and (MAX_PR_EPI_DOSE BETWEEN 49 and 56 and MAX_PR_EPI_FRACTIONS between 16 and 20 and MIN_INTENT = 2)then 'inside RCR schedules'
---when CANCERTYPE = 'HEAD AND NECK' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 41 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = '01')then 'inside RCR schedules'
+when CANCERTYPE = 'HEAD AND NECK' 
+and (MAX_PR_EPI_DOSE BETWEEN 53 and 61 and MAX_PR_EPI_FRACTIONS between 30 and 35 and MIN_INTENT = 2)then 'inside RCR schedules' --added July 2024
 
+when CANCERTYPE = 'LUNG' 
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2) then 'outside selected schedules'
+when CANCERTYPE = 'LUNG' 
+and (MAX_PR_EPI_DOSE BETWEEN 59 and 61 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2) then 'outside selected schedules'
+when CANCERTYPE = 'LUNG' 
+and (MAX_PR_EPI_DOSE BETWEEN 29 and 35 and MAX_PR_EPI_FRACTIONS = 1 and MIN_INTENT = 2) then 'outside selected schedules'
+when CANCERTYPE = 'LUNG' 
+and (MAX_PR_EPI_DOSE BETWEEN 44 and 51 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AND 5 and MIN_INTENT = 2) then 'outside selected schedules'
+when CANCERTYPE = 'LUNG' 
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS = 16 and MIN_INTENT = 2) then 'outside selected schedules'
+when CANCERTYPE = 'LUNG' 
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS = 25 and MIN_INTENT = 2) then 'outside selected schedules'
 when CANCERTYPE = 'LUNG' 
 and (MAX_PR_EPI_DOSE BETWEEN 53 and 55 and MAX_PR_EPI_FRACTIONS = 36 and MIN_INTENT = 2)then 'inside RCR schedules' --vo4 change added CHART see comment above
 when CANCERTYPE = 'LUNG' 
@@ -326,64 +328,54 @@ when CANCERTYPE = 'LUNG'
 and (MAX_PR_EPI_DOSE BETWEEN 39 and 56 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'LUNG' 
 and (MAX_PR_EPI_DOSE BETWEEN 29 and 61 and MAX_PR_EPI_FRACTIONS between 1 and 8 and MIN_INTENT = 2)then 'inside RCR schedules'
---when CANCERTYPE = 'LUNG' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 40 and MAX_PR_EPI_FRACTIONS between 1 and 13 and MIN_INTENT = '01')then 'inside RCR schedules'
-
 
 when CANCERTYPE = 'LYMPHOMA' 
 and (MAX_PR_EPI_DOSE BETWEEN 35 and 46 and MAX_PR_EPI_FRACTIONS between 20 and 25 and MIN_INTENT = 2)then 'inside RCR schedules' --v04 change 36Gy bottom range
 when CANCERTYPE = 'LYMPHOMA' 
-and (MAX_PR_EPI_DOSE BETWEEN 19 and 31 and MAX_PR_EPI_FRACTIONS between 10 and 15 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 19 and 35 and MAX_PR_EPI_FRACTIONS between 10 and 15 and MIN_INTENT = 2) then 'inside RCR schedules' --Edited July 2024
 when CANCERTYPE = 'LYMPHOMA' 
 and (MAX_PR_EPI_DOSE BETWEEN 19 and 31 and MAX_PR_EPI_FRACTIONS between 5 and 6 and MIN_INTENT = 2)then 'inside RCR schedules' --v04 change altered group
 when CANCERTYPE = 'LYMPHOMA' 
 and (MAX_PR_EPI_DOSE BETWEEN 35 and 40 and MAX_PR_EPI_FRACTIONS between 9 and 13 and MIN_INTENT = 2) then 'inside RCR schedules' --vo4 change new range added
 
-
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 54 and 56 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then 'inside RCR schedules'
-when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 51 and MAX_PR_EPI_FRACTIONS =15 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 56 and MAX_PR_EPI_FRACTIONS BETWEEN 15 AND 20 and MIN_INTENT = 2)then 'inside RCR schedules' --Edited July 2024
 when CANCERTYPE = 'SKIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 44 and 46 and MAX_PR_EPI_FRACTIONS = 10 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'SKIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 39 and 41 and MAX_PR_EPI_FRACTIONS = 8 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 34 and 36 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 34 and 36 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AND 5 and MIN_INTENT = 2)then 'inside RCR schedules' --Edited July 2024
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 31.5 and 33.5 and MAX_PR_EPI_FRACTIONS = 4 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 31.5 and 33.5 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AND 5 and MIN_INTENT = 2)then 'inside RCR schedules'
+when CANCERTYPE = 'SKIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 17 and 21 and MAX_PR_EPI_FRACTIONS = 1 and MIN_INTENT = 2)then 'inside RCR schedules' --Added jULY 2024
+when CANCERTYPE = 'SKIN' 
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25 AND 33 and MIN_INTENT = 2)then 'inside RCR schedules' --Added jULY 2024
 
 
 when CANCERTYPE = 'OESOPHAGUS' 
-and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 23 and 28 and MIN_INTENT = 2) then 'inside RCR schedules'
 when CANCERTYPE = 'OESOPHAGUS' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 61 and MAX_PR_EPI_FRACTIONS between 25 and 30 and MIN_INTENT = 2)then 'inside RCR schedules'
-when CANCERTYPE = 'OESOPHAGUS' --add pall 40Gy/15#?
-and (MAX_PR_EPI_DOSE BETWEEN 39 and 56 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then 'inside RCR schedules' /*the spreadsheet says pall as well*/
-  --when CANCERTYPE = 'OESOPHAGUS' --pall 40Gy/15# added as discrete fractionation schedule
--- and (MAX_PR_EPI_DOSE BETWEEN 39 and 41 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = '01') then 'inside RCR schedules'
---when CANCERTYPE = 'OESOPHAGUS' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 31 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = '01')then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 30 and MIN_INTENT = 2) then 'inside RCR schedules' --Edited July 2024
+when CANCERTYPE = 'OESOPHAGUS'
+and (MAX_PR_EPI_DOSE BETWEEN 39 and 56 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2) then 'inside RCR schedules'
 
 when CANCERTYPE = 'PROSTATE' 
-and (MAX_PR_EPI_DOSE BETWEEN 65 and 79 and MAX_PR_EPI_FRACTIONS between 33 and 39 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 65 and 79 and MAX_PR_EPI_FRACTIONS between 33 and 39 and MIN_INTENT = 2) then 'inside RCR schedules'
 when CANCERTYPE = 'PROSTATE' 
-and (MAX_PR_EPI_DOSE BETWEEN 51.5 and 61 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 51.5 and 61 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2) then 'inside RCR schedules'
 when CANCERTYPE = 'PROSTATE' 
-and (MAX_PR_EPI_DOSE BETWEEN 35.25 and 37.25 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2)then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 35.25 and 37.25 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2) then 'inside RCR schedules'
 when CANCERTYPE = 'PROSTATE' 											
-and (MAX_PR_EPI_DOSE BETWEEN 36.5 and 38.5 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = 2)then 'inside RCR schedules'																				
+and (MAX_PR_EPI_DOSE BETWEEN 36.5 and 38.5 and MAX_PR_EPI_FRACTIONS = 15 and MIN_INTENT = 2) then 'inside RCR schedules'																				
 when CANCERTYPE = 'PROSTATE' 											
-and (MAX_PR_EPI_DOSE BETWEEN 45 and 47 and MAX_PR_EPI_FRACTIONS = 23 and MIN_INTENT = 2)then 'inside RCR schedules'	
---when CANCERTYPE = 'PROSTATE' 
---and (MAX_PR_EPI_DOSE BETWEEN 7 and 31 and MAX_PR_EPI_FRACTIONS between 1 and 10 and MIN_INTENT = '01')then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 45 and 51 and MAX_PR_EPI_FRACTIONS BETWEEN 23 AND 25 and MIN_INTENT = 2) then 'inside RCR schedules' --Edited July 2024
 
 when CANCERTYPE = 'RECTAL' 
 and (MAX_PR_EPI_DOSE BETWEEN 44 and 51.4 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2)then 'inside RCR schedules'
 when CANCERTYPE = 'RECTAL' 
 and (MAX_PR_EPI_DOSE BETWEEN 24 and 26 and MAX_PR_EPI_FRACTIONS = 5 and MIN_INTENT = 2)then 'inside RCR schedules'
---when CANCERTYPE = 'RECTAL' 
---and (MAX_PR_EPI_DOSE BETWEEN 19 and 31 and MAX_PR_EPI_FRACTIONS between 5 and 10 and MIN_INTENT = '01')then 'inside RCR schedules'      
 else 'outside selected schedules' end as schedule_group,
 
 count (*) over (partition by a3.radiotherapyepisodeid, A3.cancertype, A3.ORGCODEPROVIDER, A3.calendar_month) as count
@@ -584,13 +576,12 @@ All_DoseFrac<-All_DoseFrac%>%group_by(RADIOTHERAPYEPISODEID,PROVIDER_NAME,CANCER
 rm(DoseFrac_Data_,DoseFrac_Scr_)
 
 ##Remove duplicate table
-
 DupTableDelete<-paste0("drop table ",CAS_user,".DUP")
 
-dbGetQueryOracle(snapshot,DupTableDelete)
+dbGetQueryOracle(cas_snapshot,DupTableDelete)
 
 ##Disconnect from the server
-dbDisconnect(snapshot)
+dbDisconnect(cas_snapshot)
 
 ##Create file name with max month
 
@@ -605,11 +596,6 @@ fwrite(All_DoseFrac,
        sep = "|",
        row.names = FALSE)
 
-##If you want to save an R file
-# getwd()
-# setwd(~)
-# save(All_DoseFrac,file='All_DoseFrac.RData')
 
-View(All_DoseFrac)
 
 
