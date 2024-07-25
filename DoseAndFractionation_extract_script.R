@@ -237,7 +237,7 @@ when CANCERTYPE = 'SKIN'
 and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25 AND 33 and MIN_INTENT = 2)then '50-66 Gy in 25-33 fractions' --Added jULY 2024
 
 when CANCERTYPE = 'OESOPHAGUS' 
-and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2)then '41.5-45 Gy in 25-28 fractions'
+and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 23 and 28 and MIN_INTENT = 2)then '41.5-45 Gy in 23-28 fractions'
 when CANCERTYPE = 'OESOPHAGUS' 
 and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 30 and MIN_INTENT = 2)then '50-66 Gy in 25-30 fractions' --Edited Gy range July 2024
 when CANCERTYPE = 'OESOPHAGUS'
@@ -355,7 +355,7 @@ and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25 AND 3
 
 
 when CANCERTYPE = 'OESOPHAGUS' 
-and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2) then 'inside RCR schedules'
+and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 23 and 28 and MIN_INTENT = 2) then 'inside RCR schedules'
 when CANCERTYPE = 'OESOPHAGUS' 
 and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 30 and MIN_INTENT = 2) then 'inside RCR schedules' --Edited July 2024
 when CANCERTYPE = 'OESOPHAGUS'
@@ -576,13 +576,12 @@ All_DoseFrac<-All_DoseFrac%>%group_by(RADIOTHERAPYEPISODEID,PROVIDER_NAME,CANCER
 rm(DoseFrac_Data_,DoseFrac_Scr_)
 
 ##Remove duplicate table
-
 DupTableDelete<-paste0("drop table ",CAS_user,".DUP")
 
-dbGetQueryOracle(snapshot,DupTableDelete)
+dbGetQueryOracle(cas_snapshot,DupTableDelete)
 
 ##Disconnect from the server
-dbDisconnect(snapshot)
+dbDisconnect(cas_snapshot)
 
 ##Create file name with max month
 
@@ -597,11 +596,6 @@ fwrite(All_DoseFrac,
        sep = "|",
        row.names = FALSE)
 
-##If you want to save an R file
-# getwd()
-# setwd(~)
-# save(All_DoseFrac,file='All_DoseFrac.RData')
 
-View(All_DoseFrac)
 
 
