@@ -31,7 +31,7 @@ cas_snapshot <- NDRSAfunctions::createConnection(sid = "cas2407" #Update this to
                                                  , port = 1525)
 
 start_date<-as.Date('01-JAN-19',format='%d-%B-%y')
-end_date<-as.Date('30-APR-24',format='%d-%B-%y')
+end_date<-as.Date('31-MAY-24',format='%d-%B-%y') #Update this to the latest month 
 
 #SL comment: the monthDiff is showing how many full months are included and yearDiff is showing the number of years (rounded)there is between the earliest date and the last date 
 MonthDiff<-interval (start_date,end_date)%/%months(1)
@@ -46,18 +46,17 @@ end_date_=list()
 start_date_=list()
 
 #SL comment: from line 59 to line 66 this is a loop that pulls the RTDS data by year as a result of the size of the dataset being extracted, this is then combined later
-#SL comment: start_date_[[1]]<-start_date is the start date i.e. 01/01/2019 plus one year so 01/01/2020 and so one until you get to the full 5 years of data 
+#SL comment: start_date_[[1]]<-start_date is the start date i.e. 01/01/2019 plus one year so 01/01/2020 and so one until you get to the full number of years of data 
 start_date_[[1]]<-start_date
   
 for (i in 1:YearsDiff) {
   
-  
+start_date_[[i+1]]<-ceiling_date(start_date%m+%months(MonthSeq[i]),'month') 
 end_date_[[i]]<-ceiling_date(start_date%m+%months(MonthSeq[i]),'month')-days(1)
-start_date_[[i+1]]<-ceiling_date(start_date%m+%months(MonthSeq[i]),'month')
 
 }
 
-end_date_[[5]]<-end_date
+end_date_[[YearsDiff]]<-end_date 
   
   
 start_date_<-start_date_[1:i] #SL comment: cuts off the missing full year which was generated in line 60 which had a missing value for 01/01/2024 as that data is not available yet
@@ -76,13 +75,17 @@ rm(end_date,end_date_,Namez,start_date,start_date_ ) #SL comment: no longer need
 #   dbGetQueryOracle(snapshot, check)
 # rm(check)
   
-DoseFrac_Data_=list() #SL comment: this doesn't appear to do anything
-DoseFrac_Scr_=list() #SL comment: this doesn't appear to do anything
+DoseFrac_Data_=list() #SL comment: this doesn't appear to do anything. EJ Comment July '24: creating an empty list for use later
+DoseFrac_Scr_=list() #SL comment: this doesn't appear to do anything. EJ Comment July '24: creating an empty list for use later
   
 ## Creates table of duplicates in your area
 #SL comment: some patients, not very many have the same radiotherapy episode id, same treatment date, same diagnosis, same trust but are different patients
+#EJ Comment July 2024
+  #there are duplicates in RTDS V5, this will be resolved in v6. See guidance for more info. We have checked the v5 tables
+  #have commented out dup section below and added distinct to main query instead
 
-Dups<-paste0("create table  ",CAS_user,".Dup as
+#Query to create the table
+Dups<-paste0("create table  ",Sys.getenv("analyst_username"),".Dup as
 
 (select
 distinct
@@ -105,15 +108,23 @@ on t1.radiotherapyepisodeid=t2.radiotherapyepisodeid
 left join analysisncr.trustsics tr
 on tr.CODE=t2.orgcodeprovider)")
 
-dbGetQueryOracle(snapshot,Dups)
+#Run the above query
+#EJ Comment July 2024
+  #got this error message "The following error was received: invalid value from generic function ‘fetch’, class “NULL”, expected “data.frame”"
+  #but when I checked my area in CAS the table has successfully been created.
+dbGetQueryOracle(cas_snapshot,Dups)
 
 ##Check if table was made ok
 dbGetQueryOracle(snapshot,paste0("select * from ",CAS_user,".Dup"))
 
 ##Main query runs for each year of data requested 
+#EJ comments July 2024
+  #I think it probably times out because there are so many case whens
+  #Could potentially improve by pulling the data and then doing the transformations in R?
+
   for (i in 1:nrow(DatesAll)){
 DoseFrac_Scr_[i] <-paste0(
-"select /*+ USE_HASH(A3 B) */ distinct 
+  "select /*+ USE_HASH(A3 B) */ distinct 
 A3.ORGCODEPROVIDER,
 B.Country,
 B.Provider_name, 
@@ -165,7 +176,7 @@ when CANCERTYPE = 'BLADDER'
 and (MAX_PR_EPI_DOSE between 51.5 and 56 and MAX_PR_EPI_FRACTIONS = 20 and MIN_INTENT = 2)then '52.5-55 Gy in 20 fractions'
 
 when CANCERTYPE = 'BRAIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 12 and 25 and MAX_PR_EPI_FRACTIONS between 1 and 5 and MIN_INTENT = 2) then '13-25 Gy in 1-5 fractions' --added July 2024
+and (MAX_PR_EPI_DOSE BETWEEN 12 and 26 and MAX_PR_EPI_FRACTIONS between 1 and 5 and MIN_INTENT = 2) then '13-25 Gy in 1-5 fractions' --added July 2024
 when CANCERTYPE = 'BRAIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 29 and 41 and MAX_PR_EPI_FRACTIONS between 6 and 15 and MIN_INTENT = 2) then '30-40 Gy in 6-15 fractions' --added July 2024
 when CANCERTYPE = 'BRAIN' 
@@ -223,7 +234,7 @@ and (MAX_PR_EPI_DOSE BETWEEN 31.5 and 33.5 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AN
 when CANCERTYPE = 'SKIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 17 and 21 and MAX_PR_EPI_FRACTIONS = 1 and MIN_INTENT = 2)then '18-20 Gy in 1 fraction' --Added jULY 2024
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25-33 and MIN_INTENT = 2)then '50-66 Gy in 25-33 fractions' --Added jULY 2024
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25 AND 33 and MIN_INTENT = 2)then '50-66 Gy in 25-33 fractions' --Added jULY 2024
 
 when CANCERTYPE = 'OESOPHAGUS' 
 and (MAX_PR_EPI_DOSE BETWEEN 40.5 and 46 and MAX_PR_EPI_FRACTIONS between 25 and 28 and MIN_INTENT = 2)then '41.5-45 Gy in 25-28 fractions'
@@ -272,7 +283,7 @@ and (MAX_PR_EPI_DOSE BETWEEN 44 and 67 and MAX_PR_EPI_FRACTIONS between 25 and 3
 when CANCERTYPE = 'BRAIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 35 and 46 and MAX_PR_EPI_FRACTIONS between 15 and 20 and MIN_INTENT = 2)then 'inside RCR schedules' --v04 change 
 when CANCERTYPE = 'BRAIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 12 and 25 and MAX_PR_EPI_FRACTIONS between 1 and 5 and MIN_INTENT = 2) then 'inside RCR schedules' --added July 2024
+and (MAX_PR_EPI_DOSE BETWEEN 12 and 26 and MAX_PR_EPI_FRACTIONS between 1 and 5 and MIN_INTENT = 2) then 'inside RCR schedules' --added July 2024
 when CANCERTYPE = 'BRAIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 29 and 41 and MAX_PR_EPI_FRACTIONS between 6 and 15 and MIN_INTENT = 2) then 'inside RCR schedules' --added July 2024
 
@@ -340,7 +351,7 @@ and (MAX_PR_EPI_DOSE BETWEEN 31.5 and 33.5 and MAX_PR_EPI_FRACTIONS BETWEEN 4 AN
 when CANCERTYPE = 'SKIN' 
 and (MAX_PR_EPI_DOSE BETWEEN 17 and 21 and MAX_PR_EPI_FRACTIONS = 1 and MIN_INTENT = 2)then 'inside RCR schedules' --Added jULY 2024
 when CANCERTYPE = 'SKIN' 
-and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25-33 and MIN_INTENT = 2)then 'inside RCR schedules' --Added jULY 2024
+and (MAX_PR_EPI_DOSE BETWEEN 49 and 67 and MAX_PR_EPI_FRACTIONS BETWEEN 25 AND 33 and MIN_INTENT = 2)then 'inside RCR schedules' --Added jULY 2024
 
 
 when CANCERTYPE = 'OESOPHAGUS' 
