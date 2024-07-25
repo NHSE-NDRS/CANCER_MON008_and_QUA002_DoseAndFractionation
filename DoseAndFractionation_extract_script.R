@@ -21,7 +21,7 @@ library(tidyverse)
 library(NDRSAfunctions)
 library(glue)
 d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
-
+d_and_f_data_extract_filepath <- Sys.getenv("folder_rtds_dose_and_fractionation_extract_data")
 ################################################################################
 # SETUP 
 
@@ -115,7 +115,7 @@ on tr.CODE=t2.orgcodeprovider)")
 dbGetQueryOracle(cas_snapshot,Dups)
 
 ##Check if table was made ok
-dbGetQueryOracle(snapshot,paste0("select * from ",CAS_user,".Dup"))
+dbGetQueryOracle(cas_snapshot,paste0("select * from ",Sys.getenv("analyst_username"),".Dup"))
 
 ##Main query runs for each year of data requested 
 #EJ comments July 2024
@@ -531,7 +531,7 @@ select  /*+ USE_HASH(N A) USE_HASH(N HA) USE_HASH(N icb)  USE_HASH(N IMD)*/
       left join IMD.IMD2019_EQUAL_LSOAS@casref01 IMD on IMD.LSOA11_CODE=N.LSOA11
       
       ---This is my own table. Need to think of a long term way of storing this. Ask analysts when it comes closer to publishing. 
-      left join ",CAS_user,".DUP  DUP
+      left join ",Sys.getenv("analyst_username"),".DUP  DUP
        on  DUP.radiotherapyepisodeid=E.radiotherapyepisodeid 
       and DUP.treatmentstartdate=E.treatmentstartdate
       and DUP.orgcodeprovider=E.orgcodeprovider
@@ -563,20 +563,23 @@ where a3.rn_address=1")
 ## Gets the data for each year - check each year is populated re-run any if server disconnects
     
 for (i in 1:nrow(DatesAll)){
-DoseFrac_Data_[[i]]<-dbGetQueryOracle(snapshot,DoseFrac_Scr_[[i]])}
+DoseFrac_Data_[[i]]<-dbGetQueryOracle(cas_snapshot,DoseFrac_Scr_[[i]])
+}
 
 ##Binds rows for full dataset
 All_DoseFrac<-bind_rows(DoseFrac_Data_)
 
 ##Counts the number of times each radiotherapyepisodeid appears (fixs any issues with counts being off because of cross year appearances)
 ##Changed grouping to remove duplicates
-All_DoseFrac<-All_DoseFrac%>%group_by(RADIOTHERAPYEPISODEID,PROVIDER_NAME,CANCERTYPE,CALENDAR_MONTH)%>%mutate(COUNT=n())
+All_DoseFrac <- All_DoseFrac %>%
+  group_by(RADIOTHERAPYEPISODEID,PROVIDER_NAME,CANCERTYPE,CALENDAR_MONTH) %>%
+  mutate(COUNT=n())
 
 ## clean up environment
 rm(DoseFrac_Data_,DoseFrac_Scr_)
 
 ##Remove duplicate table
-DupTableDelete<-paste0("drop table ",CAS_user,".DUP")
+DupTableDelete<-paste0("drop table ",Sys.getenv("analyst_username"),".DUP")
 
 dbGetQueryOracle(cas_snapshot,DupTableDelete)
 
@@ -592,7 +595,7 @@ MaxDate<-paste0(substr(MaxDate,6,7),substr(MaxDate,1,4))
 ## Make txt file - change file location if necessary
 
 fwrite(All_DoseFrac, 
-       file = glue::glue("{d_and_f_filepath}{MaxDate}_WO.txt"), 
+       file = glue::glue("{d_and_f_data_extract_filepath}/Dose&FracDemographics_{MaxDate}_WO.txt"), 
        sep = "|",
        row.names = FALSE)
 

@@ -17,6 +17,9 @@
 #    setwd(filepath)
 
 d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
+d_and_f_data_extract_filepath <- Sys.getenv("folder_rtds_dose_and_fractionation_extract_data")
+d_and_f_shiny_filepath <- Sys.getenv("folder_rtds_dose_and_fractionation_aggregated_data")
+MaxDate <- "052024"
 
 #	  load package
     library("tidyverse")
@@ -26,13 +29,14 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
 #	  import the extract 
     RTDS_EXTRACT <- 
       fread(
-        file = d_and_f_folder, 
+        file = glue::glue("{d_and_f_data_extract_filepath}/Dose&FracDemographics_{MaxDate}_WO.txt"), 
         sep = "|",
         showProgress = TRUE,
         data.table = TRUE
       )
     
 ## JA - mapping EOA trust codes
+#EJ comment July 2024 - when main extract code updated to use trustics for provider info the below won't be necessary
 
     RTDS_EXTRACT$COUNTRY <- ifelse(RTDS_EXTRACT$ORGCODEPROVIDER == 'E0A','England',RTDS_EXTRACT$COUNTRY)
     RTDS_EXTRACT$PROVIDER_NAME <- ifelse(RTDS_EXTRACT$ORGCODEPROVIDER == 'E0A','University Hospitals Sussex NHS Foundation Trust',RTDS_EXTRACT$PROVIDER_NAME)
@@ -44,7 +48,7 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
 
 ###	Data Cleaning #######################################################################
 #   drop Wales data
-    
+#EJ COMMENT JULY 202 - If we are dropping welsh data then why did we include wales in the extract?    
     
     RTDS_EXT =	RTDS_EXTRACT[COUNTRY == 'England',]
 
@@ -54,7 +58,8 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
     
     
     #filter if latest month is below 90% complete
-    RTDS_EXT = filter(RTDS_EXT, CALENDAR_MONTH <= "2024-01-01 GMT")
+    #EJ COMMENT JUKY 2024 - Now have % completeness table in cas so can automate this in future
+    RTDS_EXT = filter(RTDS_EXT, CALENDAR_MONTH <= "2024-04-01 GMT")
     
     #   separate year and month columns
     RTDS_EXT$EPI_YEAR 		= year(RTDS_EXT$CALENDAR_MONTH)
@@ -69,7 +74,7 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
     #unique(WORKING_DAYS$CALENDAR_MONTH)
     
     #Add working days from spread sheet
-    #SHOULD CHANGE THIS SO WE DON'T HAVE TO RELY ON A SPREADSHEET
+    #EJ COMMENT JULY 2024 - SHOULD CHANGE THIS SO WE DON'T HAVE TO RELY ON A SPREADSHEET
     WORKING_DAYS<-read.csv(glue::glue("{d_and_f_folder}/WORKING_DAYS.csv"))
     
     
@@ -84,7 +89,8 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
    
     
     #filter working_days to match main extract to avoid nulls
-    WORKING_DAYS = filter(WORKING_DAYS, CALENDAR_MONTH < "2024-02-01 GMT")
+    #EJ COMMENT JULY 2024 - Should make this automated
+    WORKING_DAYS = filter(WORKING_DAYS, CALENDAR_MONTH < "2024-04-01 GMT")
     
     unique(WORKING_DAYS$CALENDAR_MONTH)
     
@@ -805,9 +811,9 @@ d_and_f_folder <- Sys.getenv("folder_rtds_dose_and_fractionation")
     
     
     #   Save RDA for RSHINY app -  save paths dynamically renames with system date
-    save(RTDSdata, file= paste0(d_and_f_folder,"/RTDSaggregation",as.character(Sys.Date()),".Rda"))
+    save(RTDSdata, file= paste0(d_and_f_shiny_filepath,"/data/RTDSaggregation",as.character(Sys.Date()),".Rda"))
 
 #   save csv copy for small number review
-   fwrite	(RTDSdata,	file= paste0(d_and_f_folder,"/RTDSaggregation",as.character(Sys.Date()),".csv"),append=FALSE)
+   fwrite	(RTDSdata,	file= paste0(d_and_f_shiny_filepath,"/data/RTDSaggregation",as.character(Sys.Date()),".csv"),append=FALSE)
 
     
